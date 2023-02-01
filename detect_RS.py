@@ -1,5 +1,6 @@
 import argparse
 import time
+from time import sleep
 from pathlib import Path
 
 import cv2
@@ -16,26 +17,79 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized,
 
 import pyrealsense2 as rs
 import numpy as np
+import HiwonderServoController as servo
 
-from dynio import *
+#Setup the HiWonder Servo
+servo.setConfig('/dev/ttyUSB0', 1)
+g = [1,5]
+tilt, pan = g
 
-dxl_io = dxl.DynamixelIO('/dev/ttyUSB0', baud_rate=57600)
-mx_28_y = dxl_io.new_mx28(1, 1)  # MX-64 protocol 1 with ID 2
-mx_28_x = dxl_io.new_mx28(2, 1)  # MX-64 protocol 1 with ID 2
+#Query and Display current servo position
+boot_pos = servo.multServoPosRead(g)
+print("Boot Up Servo Position: Tilt/Pan")
+print(boot_pos[1],boot_pos[5])
 
-mx_28_y.torque_enable()
-mx_28_x.torque_enable()
+#Print out current DC IN voltage
+print(servo.getBatteryVoltage())
 
-mx_28_y.set_position(2021)
-mx_28_x.set_position(2863)
+#Set home position of HiWonder servos
+def xy_home():
+    servo.moveServo(tilt, 550, 500)
+    servo.moveServo(pan, 530, 500)
+
+#Test Pan Sweep
+def test_pan():
+    for i in range(300, 700):
+         servo.moveServo(pan, i, 500)
+
+#Test Tilt
+def test_tilt():
+    for i in range(400, 500):
+         servo.moveServo(tilt, i, 500)
+
+xy_home()
+test_tilt()
+xy_home()
 
 def fire():
     print("start firing")
-    GPIO.output(21, GPIO.HIGH)
+#    GPIO.output(21, GPIO.HIGH)
     sleep(.3)
-    GPIO.output(21, GPIO.LOW)
+#    GPIO.output(21, GPIO.LOW)
     print("stop firing")
 
+def move_servos(error_x, error_y):
+    position = servo.multServoPosRead(g)
+    pan_pos = position[5]
+    tilt_pos = position[1]
+    
+    print("Here's the incoming correction coordinates:")
+    print (error_x, error_y)
+    print("Here's where the servos started:")
+    print (pan_pos, tilt_pos)
+
+    #Bring in the error of hit from center frame and scale to servo world
+    pan_pos += error_x / 3 if abs(error_x) > 45 else pan_pos == pan_pos 
+    tilt_pos += error_y / 3 if abs(error_y) > 45 else tilt_pos == tilt_pos
+
+    #Error correct for moving quickly/out of frame
+    if abs(error_x) > 200:
+        (pan_pos == pan_pos)
+    if abs(error_y) > 200:
+        (tilt_pos == tilt_pos)
+
+    #Add in the good old anti-nutshot
+    antinutshot = 10
+    tilt_pos += antinutshot
+
+    #Show where we're gonna go
+    print("Here's where the servos are going:")
+    print(int(pan_pos), int(tilt_pos))
+
+    #Move the servos
+    servo.moveServo(pan, int(pan_pos), 400)
+    servo.moveServo(tilt, int(tilt_pos), 400)
+        
 def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
 
@@ -75,9 +129,11 @@ def detect(save_img=False):
     old_img_w = old_img_h = imgsz
     old_img_b = 1
 
+    # Configure depth and color streams
+
     config = rs.config()
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
+    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 60)
 
     pipeline = rs.pipeline()
     profile = pipeline.start(config)
@@ -85,12 +141,10 @@ def detect(save_img=False):
     align_to = rs.stream.color
     align = rs.align(align_to)
 
-    nohuman = 0
     while(True):
 
-        #t0 = time.time()
+        t0 = time.time()
         frames = pipeline.wait_for_frames()
-
         aligned_frames = align.process(frames)
         color_frame = aligned_frames.get_color_frame()
         depth_frame = aligned_frames.get_depth_frame()
@@ -113,8 +167,6 @@ def detect(save_img=False):
         # Convert
         img = img[..., ::-1].transpose((0, 3, 1, 2))  # BGR to RGB, BHWC to BCHW
         img = np.ascontiguousarray(img)
-
-
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -130,16 +182,14 @@ def detect(save_img=False):
                 model(img, augment=opt.augment)[0]
 
         # Inference
-        t1 = time_synchronized()
         with torch.no_grad():   # Calculating gradients would cause a GPU memory leak
             pred = model(img, augment=opt.augment)[0]
-        t2 = time_synchronized()
 
         # Apply NMS
         pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
-        t3 = time_synchronized()
 
         # Process detections
+        nohuman = 0
         for i, det in enumerate(pred):  # detections per image
 
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
@@ -155,15 +205,6 @@ def detect(save_img=False):
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
                     if names[int(cls)] == "person":
-                        # https://albumentations.ai/docs/getting_started/bounding_boxes_augmentation/
-                        # Yolo coordinates array - normalized [×_center, _center, width, height]
-                        # In yolo, a bounding box is represented by four values [x_center, y_center, width, height].
-                        # x_center and y_center are the normalized coordinates of the center of the bounding box.
-                        # To make coordinates normalized, we take pixel values of x and y, which marks the center
-                        # of the bounding box on the x- and y-axis. Then we divide the value of x by the width of
-                        # the image and value of y by the height of the image. width and height represent the width
-                        # and the height of the bounding box. They are normalized as well.
-                        #
                         #                  (0,0)                         (640,0)
                         #                        -----------------------Y
                         #                       |                       |
@@ -176,9 +217,6 @@ def detect(save_img=False):
                         #                        -----------------------
                         #                (0,480)                         (640,480)
                         #                              <---(x)--->
-                        #
-                        # These coordinates are seemingly NOT stored in the above mentioned format, rather in
-                        # [x_topleft, y_topleft, width, height] format. These are COCO style detection coordinates
 
                         x = float(xyxy[0])
                         y = float(xyxy[1])
@@ -187,6 +225,12 @@ def detect(save_img=False):
 
                         hit_x = float( (xyxy[0] + w)/2 )
                         hit_y = float( (xyxy[1] + h)/2 )
+
+                        center_x = 320
+                        center_y = 240
+                        
+                        error_x = center_x - hit_x
+                        error_y = center_y - hit_y 
 
                         c = int(cls)  # integer class
                         label = f'({x},{y}) - {names[c]}'
@@ -208,64 +252,32 @@ def detect(save_img=False):
                         print("I see you! At coords:")
                         print("X: " + str(hit_x))
                         print("Y: " + str(hit_y))
+                        print("My Error Correction is:")
+                        print("X: " + str(error_x))
+                        print("Y: " + str(error_y))
                         print("Depth: " + depthlabel)
 
-                        positiony = mx_28_y.get_position()
-                        positionx = mx_28_x.get_position()
-                        angley = mx_28_y.get_angle()
-                        anglex = mx_28_x.get_angle()
-
-#                        print("Servo position info:")                        
-#                        print("Servo X: " + str(positionx))
-#                        print("Servo Y: " + str(positiony))
-#                        print("Servo Angle x: " + str(anglex))
-#                        print("Servo Angle y: " + str(angley))
-
-                        if hit_x >= 480:
-                             mx_28_x.set_angle(anglex-10)
-                             print("Clockwise")
-
-                        elif hit_x <= 160:
-                             mx_28_x.set_angle(anglex+10)
-                             print("Counter clockwise")
-
-                        elif hit_y > 240:
-                             mx_28_y.set_angle(angley-10)
-                             print("Down")
-
-                        elif hit_y < 120:
-                             mx_28_y.set_angle(angley+10)
-                             print("Up")
-                        else:
-                             print("Locked")
-                             thread = Thread(target=fire)
-                             thread.start()
-                             thread.join()
-
+                        move_servos(error_x, error_y)
 
                     else:
                         nohuman=nohuman+1
                         print("no human count: " + str(nohuman))
                         print("saw a: " + names[int(cls)])
-                        if nohuman >= 25:
-                            mx_28_y.set_position(2021)
-                            mx_28_x.set_position(2863)
+                        if nohuman > 100:
                             nohuman=0
-
-            # Print time (inference + NMS)
-            #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+                            xy_home()
 
             # Stream results
-            cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
-            cv2.resizeWindow("Recognition result", 640,480)
-            cv2.imshow("Recognition result", im0)
-            cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
-            cv2.resizeWindow("Recognition result depth", 640,480)
-            cv2.imshow("Recognition result depth",depth_colormap)
-            cv2.moveWindow("Recognition result depth", 0, 480)
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            #cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
+            #cv2.resizeWindow("Recognition result", 640,480)
+            #cv2.imshow("Recognition result", im0)
+            #cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
+            #cv2.resizeWindow("Recognition result depth", 640,480)
+            #cv2.imshow("Recognition result depth",depth_colormap)
+            #cv2.moveWindow("Recognition result depth", 0, 480)
+           
+            #if cv2.waitKey(1) & 0xFF == ord('q'):
+            #    break
 
 
 if __name__ == '__main__':
