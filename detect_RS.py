@@ -1,7 +1,9 @@
 import argparse
 import time
+#import Jetson.GPIO as GPIO
 from time import sleep
 from pathlib import Path
+import os
 
 import cv2
 import torch
@@ -23,6 +25,13 @@ import HiwonderServoController as servo
 servo.setConfig('/dev/ttyUSB0', 1)
 g = [1,5]
 tilt, pan = g
+
+#Setup GPIO
+#GPIO.setmode(GPIO.BCM)
+#GPIO.setup(20,GPIO.OUT)
+os.system('echo 20 > /sys/class/gpio/export')
+os.system('echo out > /sys/class/gpio/gpio20/direction')
+
 
 #Query and Display current servo position
 boot_pos = servo.multServoPosRead(g)
@@ -53,10 +62,13 @@ xy_home()
 
 def fire():
     print("start firing")
-#    GPIO.output(21, GPIO.HIGH)
-    sleep(.3)
-#    GPIO.output(21, GPIO.LOW)
+#    GPIO.output(20, GPIO.HIGH)
+    os.system('echo 1 > /sys/class/gpio/gpio20/value')
+    sleep(.5)
+#    GPIO.output(20, GPIO.LOW)
+    os.system('echo 0 > /sys/class/gpio/gpio20/value')
     print("stop firing")
+
 
 def move_servos(error_x, error_y):
     position = servo.multServoPosRead(g)
@@ -81,6 +93,11 @@ def move_servos(error_x, error_y):
     #Add in the good old anti-nutshot
     antinutshot = 10
     tilt_pos += antinutshot
+
+    #Are we close?
+    if abs(error_x) < 50:
+        if abs(error_y) < 50:
+            fire()
 
     #Show where we're gonna go
     print("Here's where the servos are going:")
@@ -268,16 +285,16 @@ def detect(save_img=False):
                             xy_home()
 
             # Stream results
-            #cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
-            #cv2.resizeWindow("Recognition result", 640,480)
-            #cv2.imshow("Recognition result", im0)
-            #cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
-            #cv2.resizeWindow("Recognition result depth", 640,480)
-            #cv2.imshow("Recognition result depth",depth_colormap)
-            #cv2.moveWindow("Recognition result depth", 0, 480)
+#            cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
+#            cv2.resizeWindow("Recognition result", 640,480)
+#            cv2.imshow("Recognition result", im0)
+#            cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
+#            cv2.resizeWindow("Recognition result depth", 640,480)
+#            cv2.imshow("Recognition result depth",depth_colormap)
+#            cv2.moveWindow("Recognition result depth", 0, 480)
            
-            #if cv2.waitKey(1) & 0xFF == ord('q'):
-            #    break
+#            if cv2.waitKey(1) & 0xFF == ord('q'):
+#                break
 
 
 if __name__ == '__main__':
