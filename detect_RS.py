@@ -1,22 +1,15 @@
 import argparse
 import time
-#import Jetson.GPIO as GPIO
 from time import sleep
 from pathlib import Path
 import os
-
 import cv2
 import torch
-import torch.backends.cudnn as cudnn
 from numpy import random
-
 from models.experimental import attempt_load
-from utils.datasets import LoadStreams, LoadImages
-from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
-    scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
-from utils.plots import plot_one_box
-from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
-
+from utils.general import check_img_size, non_max_suppression, \
+    scale_coords, strip_optimizer, set_logging, increment_path
+from utils.torch_utils import select_device, load_classifier, TracedModel
 import pyrealsense2 as rs
 import numpy as np
 import HiwonderServoController as servo
@@ -27,8 +20,6 @@ g = [1,5]
 tilt, pan = g
 
 #Setup GPIO
-#GPIO.setmode(GPIO.BCM)
-#GPIO.setup(20,GPIO.OUT)
 os.system('echo 20 > /sys/class/gpio/export')
 os.system('echo out > /sys/class/gpio/gpio20/direction')
 
@@ -62,10 +53,8 @@ xy_home()
 
 def fire():
     print("start firing")
-#    GPIO.output(20, GPIO.HIGH)
     os.system('echo 1 > /sys/class/gpio/gpio20/value')
     sleep(.5)
-#    GPIO.output(20, GPIO.LOW)
     os.system('echo 0 > /sys/class/gpio/gpio20/value')
     print("stop firing")
 
@@ -81,8 +70,8 @@ def move_servos(error_x, error_y):
     print (pan_pos, tilt_pos)
 
     #Bring in the error of hit from center frame and scale to servo world
-    pan_pos += error_x / 3 if abs(error_x) > 45 else pan_pos == pan_pos 
-    tilt_pos += error_y / 3 if abs(error_y) > 45 else tilt_pos == tilt_pos
+    pan_pos += error_x / 3 if abs(error_x) > 100 else pan_pos == pan_pos
+    tilt_pos += error_y / 3 if abs(error_y) > 100 else tilt_pos == tilt_pos
 
     #Error correct for moving quickly/out of frame
     if abs(error_x) > 200:
@@ -91,12 +80,12 @@ def move_servos(error_x, error_y):
         (tilt_pos == tilt_pos)
 
     #Add in the good old anti-nutshot
-    antinutshot = 10
+    antinutshot = 20
     tilt_pos += antinutshot
 
     #Are we close?
-    if abs(error_x) < 50:
-        if abs(error_y) < 50:
+    if abs(error_x) < 100:
+        if abs(error_y) < 100:
             fire()
 
     #Show where we're gonna go
@@ -138,7 +127,6 @@ def detect(save_img=False):
 
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
 
     # Run inference
     if device.type != 'cpu':
@@ -155,25 +143,37 @@ def detect(save_img=False):
     pipeline = rs.pipeline()
     profile = pipeline.start(config)
 
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
+    print("Depth Scale is: " , depth_scale)
+
     align_to = rs.stream.color
     align = rs.align(align_to)
+
+    frames_counter = 0
+    start_time = time.time()
 
     while(True):
 
         t0 = time.time()
         frames = pipeline.wait_for_frames()
         aligned_frames = align.process(frames)
+
+
+        ###comment this out to REMOVE depth
+        aligned_depth_frame = aligned_frames.get_depth_frame()
         color_frame = aligned_frames.get_color_frame()
-        depth_frame = aligned_frames.get_depth_frame()
-        if not depth_frame or not color_frame:
+        if not aligned_depth_frame or not color_frame:
             continue
 
         img = np.asanyarray(color_frame.get_data())
-        depth_image = np.asanyarray(depth_frame.get_data())
+
+        ###comment this out to REMOVE depth
+        depth_image = np.asanyarray(aligned_depth_frame.get_data())
         depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.08), cv2.COLORMAP_JET)
         depth = frames.get_depth_frame()
         if not depth: continue
-            
+
         # Letterbox
         im0 = img.copy()
         img = img[np.newaxis, :, :, :]        
@@ -209,15 +209,9 @@ def detect(save_img=False):
         nohuman = 0
         for i, det in enumerate(pred):  # detections per image
 
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-
-                # Print results
-                for c in det[:, -1].unique():
-                    n = (det[:, -1] == c).sum()  # detections per class
-                    #s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
@@ -234,9 +228,6 @@ def detect(save_img=False):
                         #                        -----------------------
                         #                (0,480)                         (640,480)
                         #                              <---(x)--->
-
-                        x = float(xyxy[0])
-                        y = float(xyxy[1])
                         w = float(xyxy[2])
                         h = float(xyxy[3])
 
@@ -249,22 +240,22 @@ def detect(save_img=False):
                         error_x = center_x - hit_x
                         error_y = center_y - hit_y 
 
-                        c = int(cls)  # integer class
-                        label = f'({x},{y}) - {names[c]}'
+                        #c = int(cls)  # integer class
+                        #[label = f'({x},{y}) - {names[c]}'
 
                         # Draw green circle around center pixel.
-                        cv2.circle(im0, (int(hit_x), int(hit_y)), int(15), (0,255,0), 5)
+                        #cv2.circle(im0, (int(hit_x), int(hit_y)), int(15), (0,255,0), 5)
                         
                         # Draw bounding box around target on regular camera view, label as class such as "person".
-                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=2)
+                        #plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=2)
                         
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        d1, d2 = int((int(xyxy[0])+int(xyxy[2]))/2), int((int(xyxy[1])+int(xyxy[3]))/2)
-                        target_depth = depth.get_distance(int(d1),int(d2))
+                        #xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        #d1, d2 = int((int(xyxy[0])+int(xyxy[2]))/2), int((int(xyxy[1])+int(xyxy[3]))/2)
+                        #target_depth = depth.get_distance(int(d1),int(d2))
 
                         # Draw bounding box around target on depth camera view, label with depth of class in question.
-                        depthlabel = str(round((target_depth* 39.3701 ),2))+"in "+str(round((target_depth* 100 ),2))+" cm"
-                        plot_one_box(xyxy, depth_colormap, label=label, color=colors[int(cls)], line_thickness=2)
+                        #depthlabel = str(round((target_depth* 39.3701 ),2))+"in "+str(round((target_depth* 100 ),2))+" cm"
+                        #plot_one_box(xyxy, depth_colormap, label=label, color=colors[int(cls)], line_thickness=2)
 
                         print("I see you! At coords:")
                         print("X: " + str(hit_x))
@@ -272,7 +263,7 @@ def detect(save_img=False):
                         print("My Error Correction is:")
                         print("X: " + str(error_x))
                         print("Y: " + str(error_y))
-                        print("Depth: " + depthlabel)
+                        #print("Depth: " + depthlabel)
 
                         move_servos(error_x, error_y)
 
@@ -283,7 +274,13 @@ def detect(save_img=False):
                         if nohuman > 100:
                             nohuman=0
                             xy_home()
-
+                    frames_counter += 1
+                    elapsed_time = time.time() - start_time
+                    if elapsed_time > 1:
+                        fps = frames_counter / elapsed_time
+                        print('FPS: ',(fps))
+                        frames_counter = 0
+                        start_time = time.time()
             # Stream results
 #            cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
 #            cv2.resizeWindow("Recognition result", 640,480)
