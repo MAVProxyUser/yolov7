@@ -19,16 +19,6 @@ import numpy as np
 
 from dynio import *
 
-dxl_io = dxl.DynamixelIO('/dev/ttyUSB0', baud_rate=57600)
-mx_28_y = dxl_io.new_mx28(1, 1)  # MX-64 protocol 1 with ID 2
-mx_28_x = dxl_io.new_mx28(2, 1)  # MX-64 protocol 1 with ID 2
-
-mx_28_y.torque_enable()
-mx_28_x.torque_enable()
-
-mx_28_y.set_position(2021)
-mx_28_x.set_position(2863)
-
 def fire():
     print("start firing")
     GPIO.output(21, GPIO.HIGH)
@@ -37,7 +27,7 @@ def fire():
     print("stop firing")
 
 def detect(save_img=False):
-    source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
+    source, weights, view_img, save_txt, imgsz, depth, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, opt.depth, not opt.no_trace
 
     # Directories
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
@@ -77,35 +67,58 @@ def detect(save_img=False):
 
     config = rs.config()
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    if opt.depth == "yes":
+        print("using depth camera")
+        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 
     pipeline = rs.pipeline()
     profile = pipeline.start(config)
+
+    sensors = profile.get_device().query_sensors()
+
+# Results in dark indoor imagery
+#    for sensor in sensors:
+#        if sensor.supports(rs.option.auto_exposure_priority):
+#            #print('Start setting AE priority.')
+#            aep = sensor.get_option(rs.option.auto_exposure_priority)
+#            print(str(sensor),' supports AEP.')
+#            print('Original AEP = %d' %aep)
+#            aep = sensor.set_option(rs.option.auto_exposure_priority, 0)
+#            aep = sensor.get_option(rs.option.auto_exposure_priority)
+#            print('New AEP = %d' %aep)
+#            ep = sensor.set_option(rs.option.exposure, 78)
 
     align_to = rs.stream.color
     align = rs.align(align_to)
 
     nohuman = 0
+    frames_counter = 0
+    start_time = time.time()
+
     while(True):
 
-        #t0 = time.time()
         frames = pipeline.wait_for_frames()
 
         aligned_frames = align.process(frames)
         color_frame = aligned_frames.get_color_frame()
-        depth_frame = aligned_frames.get_depth_frame()
-        if not depth_frame or not color_frame:
+        if opt.depth == "yes":
+            depth_frame = aligned_frames.get_depth_frame()
+            if not depth_frame:
+                continue
+
+        if not color_frame:
             continue
 
         img = np.asanyarray(color_frame.get_data())
-        depth_image = np.asanyarray(depth_frame.get_data())
-        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.08), cv2.COLORMAP_JET)
-        depth = frames.get_depth_frame()
-        if not depth: continue
-            
+        if opt.depth == "yes":
+            depth_image = np.asanyarray(depth_frame.get_data())
+            depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.08), cv2.COLORMAP_JET)
+            depth = frames.get_depth_frame()
+            if not depth: continue
+
         # Letterbox
         im0 = img.copy()
-        img = img[np.newaxis, :, :, :]        
+        img = img[np.newaxis, :, :, :]
 
         # Stack
         img = np.stack(img, 0)
@@ -147,11 +160,6 @@ def detect(save_img=False):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
-                # Print results
-                for c in det[:, -1].unique():
-                    n = (det[:, -1] == c).sum()  # detections per class
-                    #s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
                     if names[int(cls)] == "person":
@@ -188,82 +196,101 @@ def detect(save_img=False):
                         hit_x = float( (xyxy[0] + w)/2 )
                         hit_y = float( (xyxy[1] + h)/2 )
 
+                        hit_y = hit_y - 20
+
                         c = int(cls)  # integer class
                         label = f'({x},{y}) - {names[c]}'
 
                         # Draw green circle around center pixel.
                         cv2.circle(im0, (int(hit_x), int(hit_y)), int(15), (0,255,0), 5)
-                        
+
                         # Draw bounding box around target on regular camera view, label as class such as "person".
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=2)
-                        
+
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         d1, d2 = int((int(xyxy[0])+int(xyxy[2]))/2), int((int(xyxy[1])+int(xyxy[3]))/2)
-                        target_depth = depth.get_distance(int(d1),int(d2))
+                        if opt.depth == "yes":
+                            target_depth = depth.get_distance(int(d1),int(d2))
 
-                        # Draw bounding box around target on depth camera view, label with depth of class in question.
-                        depthlabel = str(round((target_depth* 39.3701 ),2))+"in "+str(round((target_depth* 100 ),2))+" cm"
-                        plot_one_box(xyxy, depth_colormap, label=label, color=colors[int(cls)], line_thickness=2)
+                            # Draw bounding box around target on depth camera view, label with depth of class in question.
+                            depthlabel = str(round((target_depth* 39.3701 ),2))+"in "+str(round((target_depth* 100 ),2))+" cm"
+                            plot_one_box(xyxy, depth_colormap, label=label, color=colors[int(cls)], line_thickness=2)
 
                         print("I see you! At coords:")
                         print("X: " + str(hit_x))
                         print("Y: " + str(hit_y))
-                        print("Depth: " + depthlabel)
+                        if opt.depth == "yes":
+                            print("Depth: " + depthlabel)
 
-                        positiony = mx_28_y.get_position()
-                        positionx = mx_28_x.get_position()
-                        angley = mx_28_y.get_angle()
-                        anglex = mx_28_x.get_angle()
+                        if opt.servo == "yes":
+                             positiony = mx_28_y.get_position()
+                             positionx = mx_28_x.get_position()
+                             angley = mx_28_y.get_angle()
+                             anglex = mx_28_x.get_angle()
 
-#                        print("Servo position info:")                        
-#                        print("Servo X: " + str(positionx))
-#                        print("Servo Y: " + str(positiony))
-#                        print("Servo Angle x: " + str(anglex))
-#                        print("Servo Angle y: " + str(angley))
+                             print("Servo position info:")
+                             print("Servo X: " + str(positionx))
+                             print("Servo Y: " + str(positiony))
+                             print("Servo Angle x: " + str(anglex))
+                             print("Servo Angle y: " + str(angley))
 
                         if hit_x >= 480:
-                             mx_28_x.set_angle(anglex-10)
+                             if opt.servo == "yes":
+                                 mx_28_x.set_angle(anglex-10)
                              print("Clockwise")
 
                         elif hit_x <= 160:
-                             mx_28_x.set_angle(anglex+10)
+                             if opt.servo == "yes":
+                                 mx_28_x.set_angle(anglex+10)
                              print("Counter clockwise")
 
                         elif hit_y > 240:
-                             mx_28_y.set_angle(angley-10)
+                             if opt.servo == "yes":
+                                 mx_28_y.set_angle(angley-10)
                              print("Down")
 
                         elif hit_y < 120:
-                             mx_28_y.set_angle(angley+10)
+                             if opt.servo == "yes":
+                                 mx_28_y.set_angle(angley+10)
                              print("Up")
                         else:
                              print("Locked")
-                             thread = Thread(target=fire)
-                             thread.start()
-                             thread.join()
+                             #thread = Thread(target=fire)
+                             #thread.start()
+                             #thread.join()
 
 
                     else:
                         nohuman=nohuman+1
-                        print("no human count: " + str(nohuman))
-                        print("saw a: " + names[int(cls)])
-                        if nohuman >= 25:
-                            mx_28_y.set_position(2021)
-                            mx_28_x.set_position(2863)
+                        #print("no human count: " + str(nohuman))
+                        #print("saw a: " + names[int(cls)])
+                        if nohuman >= 55:
+                            if opt.servo == "yes":
+                                mx_28_y.set_position(2021)
+                                mx_28_x.set_position(2863)
                             nohuman=0
 
             # Print time (inference + NMS)
             #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
+            frames_counter += 1
+            elapsed_time = time.time() - start_time
+            if elapsed_time > 1:
+                fps = frames_counter / elapsed_time
+                print('FPS: ',(fps))
+                frames_counter = 0
+                start_time = time.time()
+
             # Stream results
             cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
             cv2.resizeWindow("Recognition result", 640,480)
             cv2.imshow("Recognition result", im0)
-            cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
-            cv2.resizeWindow("Recognition result depth", 640,480)
-            cv2.imshow("Recognition result depth",depth_colormap)
-            cv2.moveWindow("Recognition result depth", 0, 480)
-            
+            if opt.depth == "yes":
+                cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
+                cv2.resizeWindow("Recognition result depth", 640,480)
+                cv2.imshow("Recognition result depth",depth_colormap)
+                cv2.moveWindow("Recognition result depth", 0, 480)
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
@@ -271,6 +298,8 @@ def detect(save_img=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7-tiny.pt', help='model.pt path(s)')
+    parser.add_argument('--servo', type=str, default='no', help='source')  # "no" to disable
+    parser.add_argument('--depth', type=str, default='yes', help='source')  # "no" to disable
     parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
@@ -291,6 +320,20 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     print(opt)
     #check_requirements(exclude=('pycocotools', 'thop'))
+
+    if opt.servo == "yes":
+        print("centering dynamixel")
+        dxl_io = dxl.DynamixelIO('/dev/ttyUSB0', baud_rate=57600)
+        mx_28_y = dxl_io.new_mx28(1, 1)  # MX-64 protocol 1 with ID 2
+        mx_28_x = dxl_io.new_mx28(2, 1)  # MX-64 protocol 1 with ID 2
+
+        mx_28_y.torque_enable()
+        mx_28_x.torque_enable()
+
+        mx_28_y.set_position(2021)
+        mx_28_x.set_position(2863)
+
+
 
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
