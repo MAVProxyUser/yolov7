@@ -18,12 +18,18 @@ import pyrealsense2 as rs
 import numpy as np
 
 from dynio import *
+import threading
+import Jetson.GPIO as GPIO
 
 def fire():
     print("start firing")
-    GPIO.output(21, GPIO.HIGH)
-    sleep(.3)
-    GPIO.output(21, GPIO.LOW)
+    output_pin = 16  # BOARD pin number
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(output_pin, GPIO.OUT)
+
+    GPIO.output(output_pin, GPIO.HIGH)
+    time.sleep(.3)
+    GPIO.output(output_pin, GPIO.LOW)
     print("stop firing")
 
 def detect(save_img=False):
@@ -92,6 +98,7 @@ def detect(save_img=False):
     align = rs.align(align_to)
 
     nohuman = 0
+    shootit = 0
     frames_counter = 0
     start_time = time.time()
 
@@ -216,11 +223,12 @@ def detect(save_img=False):
                             depthlabel = str(round((target_depth* 39.3701 ),2))+"in "+str(round((target_depth* 100 ),2))+" cm"
                             plot_one_box(xyxy, depth_colormap, label=label, color=colors[int(cls)], line_thickness=2)
 
-                        print("I see you! At coords:")
-                        print("X: " + str(hit_x))
-                        print("Y: " + str(hit_y))
-                        if opt.depth == "yes":
-                            print("Depth: " + depthlabel)
+                        if opt.verbose == "yes":
+                            print("I see you! At coords:")
+                            print("X: " + str(hit_x))
+                            print("Y: " + str(hit_y))
+                            if opt.depth == "yes":
+                                print("Depth: " + depthlabel)
 
                         if opt.servo == "yes":
                              positiony = mx_28_y.get_position()
@@ -228,6 +236,7 @@ def detect(save_img=False):
                              angley = mx_28_y.get_angle()
                              anglex = mx_28_x.get_angle()
 
+                        if opt.verbose == "yes":
                              print("Servo position info:")
                              print("Servo X: " + str(positionx))
                              print("Servo Y: " + str(positiony))
@@ -255,16 +264,18 @@ def detect(save_img=False):
                              print("Up")
                         else:
                              print("Locked")
-                             #thread = Thread(target=fire)
-                             #thread.start()
-                             #thread.join()
-
-
+                             shootit = shootit +1
+                             if shootit >= 5:
+                                 print("shoot it!")
+                                 thread = threading.Thread(target=fire, daemon=True)
+                                 thread.start()
+                                 thread.join()
+                                 shootit = 0
                     else:
                         nohuman=nohuman+1
                         #print("no human count: " + str(nohuman))
                         #print("saw a: " + names[int(cls)])
-                        if nohuman >= 55:
+                        if nohuman >= 75:
                             if opt.servo == "yes":
                                 mx_28_y.set_position(2021)
                                 mx_28_x.set_position(2863)
@@ -273,13 +284,14 @@ def detect(save_img=False):
             # Print time (inference + NMS)
             #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
-            frames_counter += 1
-            elapsed_time = time.time() - start_time
-            if elapsed_time > 1:
-                fps = frames_counter / elapsed_time
-                print('FPS: ',(fps))
-                frames_counter = 0
-                start_time = time.time()
+            if opt.verbose == "yes":
+                frames_counter += 1
+                elapsed_time = time.time() - start_time
+                if elapsed_time > 1:
+                    fps = frames_counter / elapsed_time
+                    print('FPS: ',(fps))
+                    frames_counter = 0
+                    start_time = time.time()
 
             # Stream results
             cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
@@ -300,6 +312,7 @@ if __name__ == '__main__':
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7-tiny.pt', help='model.pt path(s)')
     parser.add_argument('--servo', type=str, default='no', help='source')  # "no" to disable
     parser.add_argument('--depth', type=str, default='yes', help='source')  # "no" to disable
+    parser.add_argument('--verbose', type=str, default='no', help='source')  # "no" to disable
     parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
@@ -342,3 +355,4 @@ if __name__ == '__main__':
                 strip_optimizer(opt.weights)
         else:
             detect()
+    GPIO.cleanup()
