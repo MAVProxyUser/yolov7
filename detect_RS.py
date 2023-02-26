@@ -151,6 +151,7 @@ def detect(save_img=False):
     align = rs.align(align_to)
 
     frames_counter = 0
+
     start_time = time.time()
 
     while(True):
