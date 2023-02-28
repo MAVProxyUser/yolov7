@@ -1,7 +1,7 @@
 from pyPS4Controller.controller import Controller
 import HiwonderServoController as servo
 import os
-#import pprint
+import time
 import pygame
 
 # Setup the HiWonder Servo
@@ -18,11 +18,12 @@ boot_pos = servo.multServoPosRead(g)
 print("Boot Up Servo Position: Tilt/Pan")
 print(boot_pos[1], boot_pos[5])
 
-
 pan_max = 750
 pan_min = 300
-tilt_max = 750
-tilt_min = 450
+tilt_max = 650
+tilt_min = 500
+home_pan = 530
+home_tilt = 500
 
 # Set home position of servos
 def xy_home():
@@ -31,8 +32,8 @@ def xy_home():
 #    servo.moveServo(pan, pan_min + (pan_max - pan_min)//2, 500)
 #    servo.moveServo(tilt, tilt_min + (tilt_max - tilt_min), 500)
 #    servo.moveServo(pan, pan_min + (pan_max - pan_min), 500)
-    servo.moveServo(tilt, 530, 500)
-    servo.moveServo(pan, 500, 500)
+    servo.moveServo(tilt, home_pan, 500)
+    servo.moveServo(pan, home_tilt, 500)
 
 # Test Pan Sweep
 def test_pan():
@@ -56,7 +57,6 @@ xy_home()
 test_pan()
 xy_home()
 
-
 class PS4Controller(object):
     """Class representing the PS4 controller. Pretty straightforward functionality."""
 
@@ -64,10 +64,11 @@ class PS4Controller(object):
     axis_data = None
     button_data = None
     hat_data = None
-    current_pan = 0
-    current_tilt = 0
-    pan_increment = 50
-    tilt_increment = 25
+    current_pan = home_pan
+    current_tilt = home_tilt
+    pan_increment = 5  # Increase pan increment
+    tilt_increment = 2.5  # Increase tilt increment
+    deadzone = 0.2  # Define deadzone
 
     def __init__(self):
         """Initialize the joystick components"""
@@ -96,6 +97,33 @@ class PS4Controller(object):
             for event in pygame.event.get():
                 if event.type == pygame.JOYAXISMOTION:
                     self.axis_data[event.axis] = round(event.value, 2)
+
+                    if event.axis == 2:
+                        if abs(event.value) < self.deadzone:  # Within deadzone
+                            return
+                        else:
+                            target_pan = self.current_pan - int(event.value * self.pan_increment)
+                            target_pan = min(max(target_pan, pan_min), pan_max)
+                            pan_diff = abs(target_pan - self.current_pan)
+                            pan_dir = 1 if target_pan > self.current_pan else -1
+                            for i in range(pan_diff):
+                                self.current_pan += pan_dir
+                                servo.moveServo(pan, self.current_pan, 1)
+                                time.sleep(0.01)
+
+                    elif event.axis == 5:
+                        if abs(event.value) < self.deadzone:  # Within deadzone
+                            return
+                        else:
+                            target_tilt = self.current_tilt + int(event.value * self.tilt_increment)
+                            target_tilt = min(max(target_tilt, tilt_min), tilt_max)
+                            tilt_diff = abs(target_tilt - self.current_tilt)
+                            tilt_dir = 1 if target_tilt > self.current_tilt else -1
+                            for i in range(tilt_diff):
+                                self.current_tilt += tilt_dir
+                                servo.moveServo(tilt, self.current_tilt, 1)
+                                time.sleep(0.01)
+
                 elif event.type == pygame.JOYBUTTONDOWN:
                     self.button_data[event.button] = True
                     if event.button == 7:
