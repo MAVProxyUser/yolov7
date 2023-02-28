@@ -93,18 +93,24 @@ class PS4Controller(object):
             for i in range(self.controller.get_numhats()):
                 self.hat_data[i] = (0, 0)
 
-        #set up pid controller
-        kp = 0.1 # Proportional gain
-        ki = 0.01 # Integral gain
-        kd = 0.01 # Derivative gain
-        error_integral = 0 # Integral of error
-        last_error = 0 # Last error
-
+        # Set up pid controllers for pan and tilt
+        pan_kp = 1.0  # Proportional gain for pan
+        pan_ki = 0.01  # Integral gain for pan
+        pan_kd = 0.5  # Derivative gain for pan
+        pan_error_integral = 0  # Integral of error for pan
+        pan_last_error = 0  # Last error for pan
+        
+        tilt_kp = 1.0  # Proportional gain for tilt
+        tilt_ki = 0.01  # Integral gain for tilt
+        tilt_kd = 0.5  # Derivative gain for tilt
+        tilt_error_integral = 0  # Integral of error for tilt
+        tilt_last_error = 0  # Last error for tilt
+        
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.JOYAXISMOTION:
                     self.axis_data[event.axis] = round(event.value, 2)
-
+        
                     if event.axis == 2:
                         if abs(event.value) < self.deadzone:  # Within deadzone
                             return
@@ -112,17 +118,17 @@ class PS4Controller(object):
                             target_pan = self.current_pan - int(event.value * self.pan_increment)
                             target_pan = min(max(target_pan, pan_min), pan_max)
                             error = target_pan - self.current_pan
-                    
-                            # PID controller
-                            error_integral += error
-                            error_derivative = error - last_error
-                            output = kp * error + ki * error_integral + kd * error_derivative
-                            last_error = error
-                    
-                            self.current_pan += output
+        
+                            # PID controller for pan
+                            pan_error_integral += error
+                            pan_error_derivative = error - pan_last_error
+                            pan_output = pan_kp * error + pan_ki * pan_error_integral + pan_kd * pan_error_derivative
+                            pan_last_error = error
+        
+                            self.current_pan += pan_output
                             servo.moveServo(pan, self.current_pan, 1)
                             time.sleep(0.01)
-
+        
                     elif event.axis == 5:
                         if abs(event.value) < self.deadzone:  # Within deadzone
                             return
@@ -130,17 +136,16 @@ class PS4Controller(object):
                             target_tilt = self.current_tilt + int(event.value * self.tilt_increment)
                             target_tilt = min(max(target_tilt, tilt_min), tilt_max)
                             error = target_tilt - self.current_tilt
-                    
-                            # PID controller
-                            error_integral += error
-                            error_derivative = error - last_error
-                            output = kp * error + ki * error_integral + kd * error_derivative
-                            last_error = error
-                    
-                            self.current_tilt += output
-                            servo.moveServo(tilt, self.current_tilt, 1)
-                            time.sleep(0.01) 
         
+                            # PID controller for tilt
+                            tilt_error_integral += error
+                            tilt_error_derivative = error - tilt_last_error
+                            tilt_output = tilt_kp * error + tilt_ki * tilt_error_integral + tilt_kd * tilt_error_derivative
+                            tilt_last_error = error
+        
+                            self.current_tilt += tilt_output
+                            servo.moveServo(tilt, self.current_tilt, 1)
+                            time.sleep(0.01)
                 elif event.type == pygame.JOYBUTTONDOWN:
                     self.button_data[event.button] = True
                     if event.button == 7:
