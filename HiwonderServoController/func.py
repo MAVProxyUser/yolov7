@@ -35,7 +35,7 @@ def moveServoArray(id=None,position=None,time=None):
     buf.extend([(0xff & time), (0xff & (time >> 8))])
     for i in range(len(id)):
         buf.append(id[i])
-        buf.extend([(0xff & position[i]), (0xff & (position[i] >> 8))])
+        buf.extend([(0xff & int(position)[i]), (0xff & (int(position)[i] >> 8))])
     _serial.write(buf)
 
 # move the servo. (id: int, position: int, time: int)
@@ -47,7 +47,7 @@ def moveServo(id=None,position=None,time=None):
     buf.append(1)
     buf.extend([(0xff & time), (0xff & (time >> 8))])
     buf.append(id)
-    buf.extend([(0xff & position), (0xff & (position >> 8))])
+    buf.extend([(0xff & int(position)), (0xff & (int(position) >> 8))])
     _serial.write(buf)
 
 # get current voltage.
