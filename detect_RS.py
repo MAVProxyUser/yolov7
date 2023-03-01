@@ -277,8 +277,8 @@ def detect(save_img=False):
                         #print("saw a: " + names[int(cls)])
                         if nohuman >= 75:
                             if opt.servo == "yes":
-                                mx_28_y.set_position(2021)
-                                mx_28_x.set_position(2863)
+                                mx_28_y.set_angle(180)
+                                mx_28_x.set_angle(180)
                             nohuman=0
 
             # Print time (inference + NMS)
@@ -343,8 +343,8 @@ if __name__ == '__main__':
         mx_28_y.torque_enable()
         mx_28_x.torque_enable()
 
-        mx_28_y.set_position(2021)
-        mx_28_x.set_position(2863)
+        mx_28_y.set_angle(180)
+        mx_28_x.set_angle(180)
 
 
 
