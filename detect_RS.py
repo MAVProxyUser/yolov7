@@ -150,14 +150,11 @@ def detect(save_img=False):
                 model(img, augment=opt.augment)[0]
 
         # Inference
-        t1 = time_synchronized()
         with torch.no_grad():   # Calculating gradients would cause a GPU memory leak
             pred = model(img, augment=opt.augment)[0]
-        t2 = time_synchronized()
 
         # Apply NMS
         pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
-        t3 = time_synchronized()
 
         # Process detections
         for i, det in enumerate(pred):  # detections per image
@@ -281,9 +278,6 @@ def detect(save_img=False):
                                 mx_28_x.set_angle(180)
                             nohuman=0
 
-            # Print time (inference + NMS)
-            #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
-
             if opt.verbose == "yes":
                 frames_counter += 1
                 elapsed_time = time.time() - start_time
@@ -331,7 +325,7 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     opt = parser.parse_args()
-    print(opt)
+
     #check_requirements(exclude=('pycocotools', 'thop'))
 
     if opt.servo == "yes":
@@ -351,8 +345,13 @@ if __name__ == '__main__':
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
             for opt.weights in ['yolov7.pt']:
-                detect()
+                thread = threading.Thread(target=detect, daemon=True)
+                thread.start()
+                thread.join()
                 strip_optimizer(opt.weights)
         else:
-            detect()
+            thread = threading.Thread(target=detect, daemon=True)
+            thread.start()
+            thread.join()
+
     GPIO.cleanup()
