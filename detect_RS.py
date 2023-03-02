@@ -20,6 +20,8 @@ import numpy as np
 from dynio import *
 import threading
 import Jetson.GPIO as GPIO
+import os
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 def fire():
     print("start firing")
@@ -80,9 +82,8 @@ def detect(save_img=False):
     pipeline = rs.pipeline()
     profile = pipeline.start(config)
 
-    sensors = profile.get_device().query_sensors()
-
 # Results in dark indoor imagery
+#    sensors = profile.get_device().query_sensors()
 #    for sensor in sensors:
 #        if sensor.supports(rs.option.auto_exposure_priority):
 #            #print('Start setting AE priority.')
@@ -287,18 +288,16 @@ def detect(save_img=False):
                     frames_counter = 0
                     start_time = time.time()
 
-            # Stream results
-            cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
-            cv2.resizeWindow("Recognition result", 640,480)
-            cv2.imshow("Recognition result", im0)
-            if opt.depth == "yes":
-                cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
-                cv2.resizeWindow("Recognition result depth", 640,480)
-                cv2.imshow("Recognition result depth",depth_colormap)
-                cv2.moveWindow("Recognition result depth", 0, 480)
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            if opt.gui == "yes":
+                # Stream results
+                cv2.namedWindow("Recognition result", cv2.WINDOW_KEEPRATIO)
+                cv2.resizeWindow("Recognition result", 640,480)
+                cv2.imshow("Recognition result", im0)
+                if opt.depth == "yes":
+                    cv2.namedWindow("Recognition result depth", cv2.WINDOW_KEEPRATIO)
+                    cv2.resizeWindow("Recognition result depth", 640,480)
+                    cv2.imshow("Recognition result depth",depth_colormap)
+                    cv2.moveWindow("Recognition result depth", 0, 480)
 
 
 if __name__ == '__main__':
@@ -306,6 +305,7 @@ if __name__ == '__main__':
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7-tiny.pt', help='model.pt path(s)')
     parser.add_argument('--servo', type=str, default='no', help='source')  # "no" to disable
     parser.add_argument('--depth', type=str, default='yes', help='source')  # "no" to disable
+    parser.add_argument('--gui', type=str, default='yes', help='source')  # "no" to disable
     parser.add_argument('--verbose', type=str, default='no', help='source')  # "no" to disable
     parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')

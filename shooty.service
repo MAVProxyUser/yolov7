@@ -1,0 +1,11 @@
+[Unit]
+Description=Shooty Service
+
+[Service]
+WantedBy=multi-user.target
+User=ubuntu
+Group=ubuntu
+Type=forking
+WorkingDirectory=/home/ubuntu/yolov7/
+ExecStart=/usr/local/bin/python3.11 detect_RS.py --gui no --servo yes
+ExecStop=killall python3.11
